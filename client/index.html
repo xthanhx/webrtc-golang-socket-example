@@ -1,0 +1,161 @@
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebRTC Media Example</title>
+</head>
+
+<body>
+  <h1>WebRTC Media Example</h1>
+  <div>
+    <video height="400" width="400" id="localVideo" playsinline autoplay loop muted></video>
+    <video height="200" width="200" id="remoteVideo" playsinline autoplay loop></video>
+  </div>
+  <button id="startButton">Start Call</button>
+  <button id="hangupButton">Hang Up</button>
+
+  <script>
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const startButton = document.getElementById('startButton');
+    const hangupButton = document.getElementById('hangupButton');
+
+    const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    const peerConnection = new RTCPeerConnection(configuration);
+    let localStream;
+
+    startButton.addEventListener('click', startCall);
+    hangupButton.addEventListener('click', () => {
+      console.log(remoteVideo.srcObject)
+    });
+
+    (async () => {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = localStream;
+      localStream.getTracks().forEach(track => {
+          peerConnection.addTrack(track, localStream)
+        });
+    })()
+
+    peerConnection.ontrack = (event) => {
+      console.log({event});
+      remoteVideo.srcObject = event.streams[0];
+    };
+
+    // Handling ice candidates
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log({ candidate: event.candidate });
+        sendMessage({ event: 'candidate', payload: event.candidate });
+      }
+    };
+
+    async function startCall() {
+      try {
+
+        // Create an offer
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+
+        // Send the offer to the other client
+        sendMessage({
+          event: 'offer',
+          payload: offer,
+        });
+
+      } catch (error) {
+        alert(error)
+        console.error('Error starting call:', error);
+      }
+    }
+
+    function hangUp() {
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+      }
+      localVideo.srcObject = null;
+      remoteVideo.srcObject = null;
+
+      // Send a hangup message to the other client
+      sendMessage({ event: 'hangup' });
+    }
+
+    // WebSockets and Signaling
+    const ws = new WebSocket(`wss://signal-dev.circa.vn/test`);
+
+    ws.onopen = () => {
+      console.log('Connected to signaling server');
+    };
+
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      // console.log('Received:', message);
+
+      if (message.payload.event === 'offer') {
+        handleOffer(message.payload.payload);
+      } else if (message.payload.event === 'answer') {
+        handleAnswer(message.payload.payload);
+      } else if (message.payload.event === 'candidate') {
+        handleCandidate(message.payload.payload);
+      } else if (message.payload.event === 'hangup') {
+        hangUp();
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('Connection closed');
+    };
+
+    function sendMessage(payload) {
+      ws.send(JSON.stringify({
+        event: 'connect_signal',
+        payload
+      }));
+    }
+
+    async function handleOffer(offer) {
+      if (!peerConnection) {
+        startCall();
+      }
+      try {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await peerConnection.createAnswer();
+
+        await peerConnection.setLocalDescription(answer);
+        sendMessage({ event: 'answer', payload: answer });
+      } catch (error) {
+        console.error('Error handling offer:', error);
+      }
+    }
+
+    async function handleAnswer(answer) {
+      try {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      } catch (error) {
+        console.error('Error handling answer:', error);
+      }
+    }
+
+    let candidateHjhj
+
+    async function handleCandidate(candidate) {
+      try {
+        if (!candidateHjhj) {
+          console.log({candidateHjhj: candidate})
+          candidateHjhj = new RTCIceCandidate(candidate)
+          await peerConnection.addIceCandidate(candidateHjhj);
+        }
+      } catch (error) {
+        console.error('Error handling candidate:', error);
+      }
+    }
+  </script>
+</body>
+
+</html>
